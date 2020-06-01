@@ -3,9 +3,10 @@ import argparse
 logging.getLogger().setLevel(logging.INFO)
 
 parser = argparse.ArgumentParser(allow_abbrev=False)
-parser.add_argument("--pytorch_home", type=str, default=None)
-parser.add_argument("--dataset_root", type=str, default="/home/datasets")
-parser.add_argument("--root_experiment_folder", type=str, default="/home/experiments")
+parser.add_argument("--pytorch_home", type=str, default="/media/dl-box/f12286fd-f13c-4fe0-a92d-9f935d6a7dbd/pretrained")
+parser.add_argument("--dataset_root", type=str, default="/media/dl-box/f12286fd-f13c-4fe0-a92d-9f935d6a7dbd/CVPR")
+parser.add_argument("--root_experiment_folder", type=str,
+                    default="/home/dl-box/WorkBench/CodeBench/PyCharmProject/Project_output/Out_img_metric/pw_bench")
 parser.add_argument("--global_db_path", type=str, default=None)
 parser.add_argument("--merge_argparse_when_resuming", default=False, action='store_true')
 parser.add_argument("--root_config_folder", type=str, default=None)
@@ -23,5 +24,6 @@ else:
 	del args.bayes_opt_iters
 	del args.reproductions
 
-r = runner(**(args.__dict__))
-r.run()
+if __name__ == '__main__':
+	r = runner(**(args.__dict__))
+	r.run()
