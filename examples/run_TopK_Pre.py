@@ -1,7 +1,9 @@
 import logging
 import argparse
 import torch
+import torch.nn.functional as F
 from pytorch_metric_learning import losses, miners
+from pytorch_metric_learning.utils import loss_and_miner_utils as lmu
 from util import get_pairwise_stds, get_pairwise_similarity, dist
 
 logging.getLogger().setLevel(logging.INFO)
@@ -40,24 +42,24 @@ class TopKPreLoss(losses.BaseMetricLossFunction):
     Jing Lu, Chaofan Xu, Wei Zhang, Ling-Yu Duan, Tao Mei; The IEEE International Conference on Computer Vision (ICCV), 2019, pp. 7961-7970
     """
 
-    def __init__(self, anchor_id='Anchor', use_similarity=False, opt=None):
-        super(TopKPreLoss, self).__init__()
+    def __init__(self, k=5, anchor_id='Anchor'): # , use_similarity=False, opt=None):
+        super().__init__()
 
         self.name = 'TopKPreLoss'
         assert anchor_id in ANCHOR_ID
 
-        self.opt = opt
+        # self.opt = opt
         self.anchor_id = anchor_id
-        self.use_similarity = use_similarity
+        # self.use_similarity = use_similarity
 
-        self.k = self.opt.pk
-        self.margin = self.opt.margin
+        self.k = k
+        self.margin = 0.1 # self.opt.margin
 
-        if 'Class' == anchor_id:
-            assert 0 == self.opt.bs % self.opt.samples_per_class
-            self.num_distinct_cls = int(self.opt.bs / self.opt.samples_per_class)
+        # if 'Class' == anchor_id:置いておく
+        #     assert 0 == self.opt.bs % self.opt.samples_per_class
+        #     self.num_distinct_cls = int(self.opt.bs / self.opt.samples_per_class)
 
-    def compute_loss(simi_mat, cls_match_mat, k=None, margin=None):
+    def compute_loss(self, embeddings, labels, indices_tuple): # (simi_mat, cls_match_mat, k=5, margin=None):
         '''
         assuming no-existence of classes with a single instance == samples_per_class > 1
         :param sim_mat: [batch_size, batch_size] pairwise similarity matrix, without removing self-similarity
@@ -66,8 +68,17 @@ class TopKPreLoss(losses.BaseMetricLossFunction):
         :param margin:
         :return:
         '''
+        # print('conpute loss')
+        # print('embeddings size', embeddings.size())
+        # print('labels size', labels.size())
 
-        simi_mat_hat = simi_mat + (1.0 - cls_match_mat) * margin  # impose margin
+        simi_mat = get_pairwise_similarity(batch_reprs=embeddings)
+        cls_match_mat = get_pairwise_stds(
+            batch_labels=labels)  # [batch_size, batch_size] S_ij is one if d_i and d_j are of the same class, zero otherwise
+        # print('simi mat', simi_mat.size())
+        # print('class match mat', cls_match_mat.size())
+
+        simi_mat_hat = simi_mat + (1.0 - cls_match_mat) * self.margin  # impose margin
 
         ''' get rank positions '''
         _, orgp_indice = torch.sort(simi_mat_hat, dim=1, descending=True)
@@ -85,9 +96,9 @@ class TopKPreLoss(losses.BaseMetricLossFunction):
         # batch_ks = torch.clamp(batch_pos_nums, max=k)
         '''
         due to no explicit self-similarity filtering.
-        implicit assumption: a common L2-normalization leading to self-similarity of the maximum one! 
+        implicit assumption: a common L2-normalization leading to self-similarity of the maximum one!
         '''
-        batch_ks = torch.clamp(batch_pos_nums, max=k + 1)
+        batch_ks = torch.clamp(batch_pos_nums, max=self.k + 1)
         k_mat = batch_ks.view(-1, 1).repeat(1, rank_mat.size(1))
         # print('k_mat', k_mat.size())
 
@@ -130,38 +141,36 @@ class TopKPreLoss(losses.BaseMetricLossFunction):
 
         return batch_loss
 
-    def forward(self, batch_reprs, batch_labels):
-        '''
-        :param batch_reprs:  torch.Tensor() [(BS x embed_dim)], batch of embeddings
-        :param batch_labels: [(BS x 1)], for each element of the batch assigns a class [0,...,C-1]
-        :return:
-        '''
+    # def forward(self, batch_reprs, batch_labels):
+    #     '''
+    #     :param batch_reprs:  torch.Tensor() [(BS x embed_dim)], batch of embeddings
+    #     :param batch_labels: [(BS x 1)], for each element of the batch assigns a class [0,...,C-1]
+    #     :return:
+    #     '''
+    #     print('forward')
+    #
+    #     cls_match_mat = get_pairwise_stds(
+    #         batch_labels=batch_labels)  # [batch_size, batch_size] S_ij is one if d_i and d_j are of the same class, zero otherwise
+    #
+    #     if self.use_similarity:
+    #         sim_mat = get_pairwise_similarity(batch_reprs=batch_reprs)
+    #     else:
+    #         dist_mat = dist(batch_reprs=batch_reprs, squared=False)  # [batch_size, batch_size], pairwise distances
+    #         sim_mat = -dist_mat
+    #
+    #     if 'Class' == self.anchor_id:  # vs. anchor wise sorting
+    #         cls_match_mat = cls_match_mat.view(self.num_distinct_cls, -1)
+    #         sim_mat = sim_mat.view(self.num_distinct_cls, -1)
+    #
+    #     batch_loss = self.compute_loss(simi_mat=sim_mat, cls_match_mat=cls_match_mat, k=self.k, margin=self.margin)
+    #
+    #     return batch_loss
 
-        cls_match_mat = get_pairwise_stds(
-            batch_labels=batch_labels)  # [batch_size, batch_size] S_ij is one if d_i and d_j are of the same class, zero otherwise
-
-        if self.use_similarity:
-            sim_mat = get_pairwise_similarity(batch_reprs=batch_reprs)
-        else:
-            dist_mat = dist(batch_reprs=batch_reprs, squared=False)  # [batch_size, batch_size], pairwise distances
-            sim_mat = -dist_mat
-
-        if 'Class' == self.anchor_id:  # vs. anchor wise sorting
-            cls_match_mat = cls_match_mat.view(self.num_distinct_cls, -1)
-            sim_mat = sim_mat.view(self.num_distinct_cls, -1)
-
-        batch_loss = self.compute_loss(simi_mat=sim_mat, cls_match_mat=cls_match_mat, k=self.k, margin=self.margin)
-
-        return batch_loss
-
-
-# your custom mining function
-# class TopKPreMining(miners.BaseTupleMiner):
-#     ...
 
 if __name__ == '__main__':
     r = runner(**(args.__dict__))
     # make the runner aware of them
     r.register("loss", TopKPreLoss)
+    # print('register', r.register("loss", TopKPreLoss))
     # r.register("miner", TopKPreMining)
     r.run()
