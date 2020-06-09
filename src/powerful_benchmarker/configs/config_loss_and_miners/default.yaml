@@ -1,9 +1,9 @@
 loss_funcs:
-  metric_loss: 
-    ContrastiveLoss:
+  metric_loss:
+    TopKPreLoss:
 
 sampler:
   MPerClassSampler:
-    m: 4
+    m: 10
 
 mining_funcs: {}
